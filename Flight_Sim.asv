@@ -1,0 +1,245 @@
+function [T, X, Y, Z, U, V, W, Tx, Ty, Tz, omgX, thetaX, omgY, thetaY,rot_force, R, alpha_wind_X,servo_Y, wind_force_X, wind_force_Y] = Flight_Sim(Xo,Yo,Zo, motor, moment_arm, dist_COP, ang_X, ang_Y, wind_speed_X, wind_speed_Y)
+%FLIGHT_SIM uses the initial XYZ coordinates, motor, moment_arm, servo angles (X,Y) center
+%of pressure, and wind speeds to plot a simulated flight of the rocket.
+%   Windspeed is in miles per hour
+
+
+% finite differences / gridmesh
+
+%% TO DO LIST
+% 1: ROCKET ORIENTATION EVERY SECOND -> done
+% 2: 2D WINDS                        -> done
+% 3: PID controller
+%   input: servo angle, 
+%   output: rocket angle,
+%   setpoint: 0 degrees
+%   feedback
+
+
+% Initial Conditions
+m = 0.52084;
+n = 1;
+dt = 0.05;
+Inertia = 0.01070982751;
+X(n) = Xo;
+Y(n) = Yo;
+Z(n) = Zo;
+U(n) = 0;
+V(n) = 0;
+W(n) = 0;
+thetaY(n) = 0;
+omgY(n) = 0;
+thetaX(n) = 0;
+omgX(n) = 0;
+T(n) = 0;
+I_error_x = 0;
+I_error_y = 0;
+
+while Z(n) > 0 || T(n) < 0.5
+% get thrust of rocket
+current_thrust = thrust(motor, T);
+%calculate current wind_force, and find the alpha on rocket which is induced
+wind_force_X(n+1) = windX(.49*.0787, 1.225, wind_speed_X, thetaY); % +X direction
+alpha_wind_X(n+1) = (wind_force_X(n+1)*moment_arm)/Inertia; % USE INERTIA INSTEAD OF MASS, RN USING A RANDOM TEST VALUE
+wind_force_Y(n+1) = windY(.49*.0787, 1.225, wind_speed_Y,thetaX);
+alpha_wind_Y(n+1) = (wind_force_Y(n+1)*moment_arm)/Inertia;
+
+
+%% PID Controllers
+target_angle = 0;
+Kp = 10.0;
+Ki = 1.50;
+Kd = 3.0;
+
+%% ANGLES
+% X-direction
+prev_error_x = 0;
+error_x = target_angle - thetaX(end);
+P_error_x = Kp * error_x;
+% trans_X_error = 120*U(end)*dt + X(end); 
+I_error_x = I_error_x + error_x*dt;
+D_error_x = (error_x - prev_error_x) / dt;
+prev_error_x = error_x;
+% Y-direction
+prev_error_y = 0;
+error_y = target_angle - thetaX(end);
+P_error_y = Kp * error_y;
+% trans_y_error = 120*V(end)*dt + Y(end);
+I_error_y = I_error_y + error_y*dt;
+D_error_y = (error_y - prev_error_y) / dt;
+prev_error_y = error_y;
+
+servo_X(n+1) = PID_control(Kp, Ki, Kd, error_x, I_error_x, D_error_x) 
+servo_Y(n+1) = PID_control(Kp, Ki, Kd, error_y, I_error_y, D_error_y) 
+
+%% get optimal servo angle for the mount
+    %servo_X(n+1) = find_TVC_angle(alpha_wind_Y, moment_arm, current_thrust, thetaX, V) % dictates y- direction
+    %servo_Y(n+1) = find_TVC_angle(alpha_wind_X, moment_arm, current_thrust, thetaY, U); % X DIRECTION
+% servo_X(n+1) = find_TVC_angle(alpha_wind_Y, moment_arm, current_thrust, thetaX, V);
+% servo_Y(n+1) = find_TVC_angle(alpha_wind_X, moment_arm, current_thrust, thetaY, U);
+
+
+%% Forces
+%returns unit vectors for the thrust force based on the TVC mount's angles.
+[unit_X, unit_Y, unit_Z] = TVC(servo_X(n+1), servo_Y(n+1)); %servo_Y(n+1)
+
+%get current forces on rocket
+Tz = ThrustZ(current_thrust, unit_Z);
+Tx = ForceX(current_thrust, unit_X);
+Ty = ForceY(current_thrust, unit_Y);
+
+
+% angle of rocket and angular speed
+omgY(n+1) = omgY(n) + alpha_wind_X(n+1)*dt - Tx*(moment_arm/Inertia)*dt;   % - (Fx*sin(servo_Y(end))/Inertia)*dt;
+thetaY(n+1) = thetaY(n) + omgY(n+1)*dt;
+omgX(n+1) = omgX(n) + alpha_wind_Y(n+1)*dt - Ty*(moment_arm/Inertia)*dt;
+thetaX(n+1) = thetaX(n) + omgX(n+1)*dt;
+%Rotation Matrices and Translational Motion
+R = rotation_matrix(thetaX(n+1), thetaY(n+1));
+rot_force = R * [Tx; Ty; Tz];
+Tx = rot_force(1);
+Ty = rot_force(2);
+Tz = rot_force(3);
+% X
+U(n+1) = U(n) + (Tx/m)*dt + wind_force_Y(n+1)/m*dt;
+X(n+1) = X(n) + U(n+1)*dt;
+% Y
+V(n+1) = V(n) + (Ty/m)*dt + wind_force_X(n+1)/m*dt;
+Y(n+1) = Y(n) + V(n+1)*dt;
+% Z
+W(n+1) = W(n) + (Tz/m)*dt -9.81*dt;
+Z(n+1) = Z(n) + W(n+1)*dt;
+T(n+1) = T(n) + dt;
+n = n + 1;
+
+
+
+end
+% trim last values
+T = T(1:end-1); X = X(1:end-1); Y = Y(1:end-1); Z = Z(1:end-1); U = U(1:end-1); V = V(1:end-1); W = W(1:end-1);
+thetaY = thetaY(1:end-1); 
+omgY = omgY(1:end-1);
+alpha_wind_X = alpha_wind_X(1:end-1);
+servo_Y = servo_Y(1:end-1);
+thetaX = thetaX(1:end-1);
+omgX = omgX(1:end-1);
+alpha_wind_Y = alpha_wind_Y(1:end-1);
+servo_X = servo_X(1:end-1);
+
+
+end % end of main function
+
+
+
+
+%% FINDS CURRENT THRUST
+function thrust = thrust(motor, T)
+    % defining the motor times and thrust
+    times = [motor.time];
+    thrusts = [motor.thrust];
+
+    abs_time_diff = abs(T(end) - times); % represents the absolute difference in values of times, the minimum of this should be the index of the thrust
+    current_thrust_index = find(abs_time_diff == min(abs_time_diff)  ); % finds the indices of time which are closest to the current time
+    current_thrust_index = current_thrust_index(1); 
+    thrust = thrusts(current_thrust_index);
+end
+
+
+%% FORCE CALCULATIONS BASED ON SERVO ANGLE
+function Fx = ForceX(thrust,unit_X)
+    Fx = thrust*unit_X;
+end
+function Fy = ForceY(thrust,unit_Y)
+    Fy = thrust*unit_Y;
+end
+function Tz = ThrustZ(thrust,unit_Z)
+    Tz = thrust*unit_Z;
+end
+
+function fnetZ = ForceZ(thrust, Cd, mass, speed, unit_Z)
+    Fgravity = mass*9.81;
+    Fdrag = 0.5*1.225*((speed(end))^2)*Cd*0.00486451275;   %1/2 * air density * velocity^2 * Coeff drag( assumed .75 ) * cross-section area
+    Fmotor = thrust*unit_Z;
+    fnetZ = Fmotor - Fdrag - Fgravity;
+end
+
+
+
+function [unit_X, unit_Y, unit_Z] = TVC(servo_X_angle, servo_Y_angle)
+% theta represents 1st servo angle, phi represents 2nd servo angle 
+%   Returns unit vectors for direction of the force on X, Y, and Z
+    unit_X = -sind(servo_Y_angle); % increasing + servo_y angle -> -x
+    unit_Y = -sind(servo_X_angle); % increasing + servo_x angle -> -y
+    unit_Z = cosd(servo_X_angle)*cosd(servo_Y_angle);
+end
+
+function wind_force_X = windX( area, air_density, windspeed_mph, theta_Y) % Note, area will depend on the angle of the rocket
+windspeed_ms = windspeed_mph/2.237;
+wind_force_X = area*cosd(theta_Y(end))*windspeed_ms^2;
+end
+function wind_force_Y = windY( area, air_density, windspeed_mph, theta_X) % Note, area will depend on the angle of the rocket
+windspeed_ms = windspeed_mph/2.237;
+wind_force_Y = area*cosd(theta_X(end))*windspeed_ms^2;
+end
+
+function R = rotation_matrix(thetaX, thetaY) 
+% assumes a rotation around the y-axis, coming at an angle THETA from the Z-axis
+    Ry = [cosd(thetaY(end)), 0, sind(thetaY(end));
+        0, 1, 0; 
+        -sind(thetaY(end)), 0, cosd(thetaY(end)) ];
+    Rx = [1, 0, 0;
+           0, cosd(-thetaX(end)), -sind(-thetaX(end)) ;
+           0, sind(-thetaX(end)), cosd(-thetaX(end))];
+    R = Ry*Rx;
+end
+
+
+
+function PID = PID_control(Kp, Ki, Kd, error, integral_e, derivative_e) 
+    PID = Kp * error + Ki * integral_e + Kd * derivative_e;
+end
+
+
+
+
+
+
+
+
+
+% 
+% function LQR = LQR(X,Y,Z,U,V,W,omgX,omgY,thetaX,thetaY)
+%     % State Space Equations
+%         % x = [X(end); Y(end); Z(end); U(end); V(end); W(end); omgX(end); omgY(end); thetaX(end); thetaY(end)];
+%         A = [0 0 0 1 0 0 0 0 0 0
+%              0 0 0 0 1 0 0 0 0 0
+%              0 0 0 0 0 1 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 1 0
+%              0 0 0 0 0 0 0 0 0 1
+%              0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0
+%              ];
+%         B = [0 0 0 0 0 
+%              0 0 0 0 0 
+%              0 0 0 0 0
+%              1/m 0 0 0 0
+%              0 1/m 0 0 0
+%              0 0 1/m 0 0 
+%              0 0 0 0 0 
+%              0 0 0 0 0 
+%              0 0 0 0 0
+%              0 0 0 0 0];
+%         C = [0 0 0 0 0 0 0 0 1 0;
+%              0 0 0 0 0 0 0 0 0 1];
+%         D =  zeros(2,5) 
+%         Q = diag([1,1,1,1,1,1,1,1,1,1]); % Places weights in the state matrix x(importance of specific state variables). Assigns penalties for errors in the state variables
+%         R = diag([1,1,1,1,1]) % Places weights on control effort (cost of control). [Tx, Ty, Tz, servoX, servoY]
+% 
+%         % Compute gain matrix
+%         K = lqr(A,B,Q,R)
+% 
+% 
+% end

@@ -1,0 +1,115 @@
+clear; clc; close all;
+fid = fopen('Estes_E12.csv', 'r');
+servo_angle = 1;
+while 1
+current_line = fgetl(fid);
+    if ~ischar(current_line)
+        break
+    end
+    [time, thrust] = strtok(current_line, ',');
+    motor(servo_angle).time = str2double(time);
+    motor(servo_angle).thrust = str2double(thrust);
+    servo_angle = servo_angle+1;
+end
+fclose(fid);
+
+% motor will be input into Flight_sim
+angX = 0;
+angY = 0;
+% Initialize parameters
+c = 1;
+cs = 'krbgcmy'; 
+wind_speeds = [0 3.535533906932738 7.071067812 10.60660171779821 14.14213562];
+
+% Create figure for plotting
+figure(2);
+hold on;
+
+% Initialize plot handles for each wind speed
+plt = gobjects(1, length(wind_speeds)); % Preallocate array for plot handles
+
+% Loop through each wind speed
+for idx = 1:length(wind_speeds)
+    t = wind_speeds(idx);
+    [T, X, Y, Z, U, V, W, Fx, Fy, Fz, omegaX, thetaX, omegaY, thetaY, rot_force, R, alpha_wind_X, servo_Y, wind_force_X, wind_force_Y] = Flight_Sim(0,0,0, motor, .216, .3, angX, angY, t, t);
+    flight(c).T = T;
+    flight(c).X = X;
+    flight(c).Y = Y;
+    flight(c).Z = Z;
+    flight(c).U = U;
+    flight(c).V = V;
+    flight(c).W = W;
+    flight(c).thetaX = thetaX;
+    flight(c).thetaY = thetaY;
+    flight(c).rot_force = rot_force;
+    
+    % Update plot for current wind speed
+    if isvalid(plt(idx))
+        delete(plt(idx)); % Delete old plot if it exists
+    end
+        plt(idx) = plot3(flight(c).X, flight(c).Y, flight(c).Z, ['-', cs(idx)], 'LineWidth', 1);
+    plot3(flight(c).X(1), flight(c).Y(1), flight(c).Z(1), '-g*');
+    plot3(flight(c).X(55), flight(c).Y(55), flight(c).Z(55), 'rx', 'MarkerSize', 6, 'MarkerFaceColor', 'r');
+    quiver3(0, 0, 0, acosd(t/sqrt(t^2+t^2)), asind(t/sqrt(t^2+t^2)), 0, .7, 'Color', 'm', 'LineWidth', 2);
+    view(10, 30);
+
+    % Finding max height and updating plot
+    [~, m] = max(flight(c).Z);
+    plot3(flight(c).X(m), flight(c).Y(m), flight(c).Z(m), '-ro', 'MarkerSize', 5, 'MarkerFaceColor', 'r');
+    quiver3(flight(c).X(m), flight(c).Y(m), flight(c).Z(m), sind(flight(c).thetaY(m)), sind(flight(c).thetaX(m)), cosd(flight(c).thetaY(m)), 5.5, 'Color', 'y', 'LineWidth', 2);
+
+    % Displays rocket angle every 1/2 second
+    idx_plot = 1:10:length(flight(c).Z);
+    for n = idx_plot
+        quiver3(flight(c).X(n), flight(c).Y(n), flight(c).Z(n), sind(flight(c).thetaY(n)), sind(flight(c).thetaX(n)), cosd(flight(c).thetaY(n)), 5.5, 'Color', cs(idx), 'LineWidth', 2);
+        plot3(flight(c).X(n), flight(c).Y(n), flight(c).Z(n), '.', 'MarkerSize', 8, 'MarkerFaceColor', cs(idx), 'MarkerEdgeColor', 'k');
+    end
+    plot3(flight(c).X(end), flight(c).Y(end), flight(c).Z(end), 'c^', 'MarkerFaceColor', 'c');
+
+    % Update axis limits
+    axis([-10 150 -10 100 0 100]);
+    xlabel('X');
+    ylabel('Y');
+    zlabel('Z');
+    c = c + 1; % Increment counter
+end
+
+title('Wind force acting in 2 directions, attitude controlled');
+legend_strings = arrayfun(@(t) sprintf('Wind Speed %d mph', sqrt(2*t^2)), wind_speeds, 'UniformOutput', false);
+legend(plt, legend_strings);
+hold off;
+
+    
+
+
+figure(3); hold on;
+plot(T,thetaY)
+plot(T,omegaY)
+plot(T(46), thetaY(46), 'ro', 'MarkerFaceColor', 'red', 'MarkerSize',3)
+axis([0 7 -30 max(thetaY)])
+legend('thetaY', 'omegaY', 'end of TVC')
+title('THRUST VECTOR CONTROL IN 20 MPH WINDS')
+
+
+
+% Plotting thrust curve
+times = [motor.time];
+thrusts = [motor.thrust];
+figure(4); 
+hold on;
+plot(times, thrusts)
+plot(T,servo_Y)
+axis([0 max(times) -30 max(thrusts)+5])
+title('Thrust vs Time')
+xlabel('Time (s)')
+ylabel('Thrust (N)')
+legend('thrust', 'servo_angle')
+
+
+figure(5); hold on;
+plot(T(1:end-1),diff(X))
+plot(T(1:end-1), diff(Y))
+xlabel("time")
+ylabel("Velocity")
+legend('Vx', 'Vy')
+
